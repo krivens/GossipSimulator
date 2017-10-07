@@ -14,29 +14,57 @@ defmodule GossipNode do
 
     @doc """
     """
-    def start_link(__MODULE__, args, opts) do
-        
+    def start_link(args) do
+        GenServer.start_link(__MODULE__, args)
     end
 
-    def add_neighbour(neighbourdata, state) do
-        handle_cast({:addneighbour, neighbourdata}, state)    
+    def add_neighbours(pid, neighbours) do
+        GenServer.cast(pid, {:addneighbours, neighbours})    
     end
 
-    def handle_cast({:addneighbour, neighbourdata}, state) do
-        neighbourmapnew = Map.update(state.neighbourmap, neighbourdata.neighbournumber, neighbourdata.neighbourname)
-        Map.update(state, :neighbours, neighbourmapnew)
-        {:noreply, state}
+    def hear_rumour(pid) do
+        GenServer.cast(pid, {:hearrumour})
     end
 
-    def handle_cast({:rumour, round}, state) do
-        
+    def get_state(pid) do
+        GenServer.call(pid, {:getstate})
     end
 
-    def handle_cast({:failnode}, state) do
-        
+    def handle_cast({:addneighbours, neighbours}, state) do
+        newstate = Map.put(state, :neighbours, neighbours)
+        {:noreply, newstate}
     end
 
-    def handle_cast({:failconnection, neighour, mode}, state) do
-        
+    def handle_cast({:hearrumour}, state) do
+        count = Map.get(state, :rumourcount)
+        newstate = if(count == nil) do
+                    spawn(sendrumour(self()))
+                    #TODO register that you heard the rumour
+                    Map.put(state, :rumourcount, 1)
+                else
+                    #TODO register that you've heard the rumour more than 10 times
+                    Map.put(state, :rumourcount, count + 1) 
+        end
+        {:noreply, newstate}
+    end
+
+    def handle_call({:getstate}, _from, state) do
+        {:reply, state}
+    end
+
+    defp sendrumour(pid) do
+        state = GossipNode.get_state(pid)
+        neighbours = Map.get(state, :neighbours)
+        count = Map.get(state, :rumourcount)
+        if(count != nil && count <= 10) do
+            getrandomneighbour(neighbours)
+        end
+    end
+
+    defp getrandomneighbour(neighbours) do
+        case neighbours do
+            :completenetwork -> self() # TODO get a service neighbour
+            _ -> elem(neighbours, :rand.uniform(tuple_size(neighbours)) - 1)
+        end
     end
 end
