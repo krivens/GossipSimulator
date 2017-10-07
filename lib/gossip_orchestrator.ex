@@ -1,7 +1,11 @@
 defmodule GossipOrchestrator do
 
     def startgossipsimulation(args) do
-        createnetwork(elem(args, 0), elem(args,1))        
+        nodes = createnetwork(elem(args, 0), elem(args,1))
+        case elem(args, 2) do
+            "gossip" -> GossipNode.hear_rumour(elem(nodes, :rand.uniform(tuple_size(nodes) - 1)), 0)
+            "push-sum" -> GossipNode.push_sum(elem(nodes, :rand.uniform(tuple_size(nodes) - 1)), 0)
+        end
     end
 
     def createnetwork(numnodes, topology) do
@@ -27,6 +31,7 @@ defmodule GossipOrchestrator do
 
         # tell each node who its neighbours are
         neighbourize(nodes, topology, numnodes, rows, columns)
+        nodes
     end
 
     defp createnodes(nodelist, numnodes, columns, nodeindex) do
@@ -35,7 +40,7 @@ defmodule GossipOrchestrator do
             _ ->
                 noderow = div(nodeindex, columns)
                 nodecol = rem(nodeindex, columns)
-                {:ok, nodepid} = GossipNode.start_link(%{:identity => {nodeindex, noderow, nodecol}}) 
+                {:ok, nodepid} = GossipNode.start_link(%{:identity => {nodeindex, noderow, nodecol}, :s => (nodeindex + 1), :w => 1}) 
                 createnodes(nodelist ++ [nodepid], numnodes, columns, nodeindex + 1)
         end
     end
