@@ -21,7 +21,7 @@ defmodule GossipNode do
     end
 
     def hear_rumour(pid, roundnumber) do
-        GenServer.cast(pid, {:hearrumour, roundnumber})
+        GenServer.cast(pid, {:hearrumour, pid, roundnumber})
     end
 
     def push_sum(pid, svalue, wvalue, roundnumber) do
@@ -37,14 +37,16 @@ defmodule GossipNode do
         {:noreply, newstate}
     end
 
-    def handle_cast({:hearrumour, roundnumber}, state) do
+    def handle_cast({:hearrumour, pid, roundnumber}, state) do
+        #pidstring = inspect(pid)
+        #IO.puts "Heard rumour at process #{pidstring}"
         count = Map.get(state, :rumourcount)
         newstate = if(count == nil) do
-                    spawn(sendrumour(self(), roundnumber))
-                    #TODO register that you heard the rumour
+                    spawn(__MODULE__, :sendrumour, [pid, roundnumber])
+                    GossipRegistry.heard_rumour
                     Map.put(state, :rumourcount, 1)
                 else
-                    #TODO register that you've heard the rumour more than 10 times
+                    GossipRegistry.heard_enough
                     Map.put(state, :rumourcount, count + 1) 
         end
         {:noreply, newstate}
@@ -57,12 +59,26 @@ defmodule GossipNode do
         w = Map.get(state, :w)
         news = (s + svalue)/2 # the new value of s
         neww = (w + wvalue)/2 # the new value of w
-        if (((news/neww) - (s/w) |> abs) > 0.0000000001) do # if the ratio has changed by more than 1 in 10^-10 reset
-            pushcount = 0
+        pushcount =  if (((news/neww) - (s/w) |> abs) > 0.0000000001) do # if the ratio has changed by more than 1 in 10^-10 reset
+                        0
+                    else
+                        test = Map.get(state, :pushcount)
+                        if (test == nil) do
+                            0
+                        else
+                            test + 1
+                        end
+                    end
+        state = Map.put(state, :s, news)
+        state = Map.put(state, :w, neww)
+        state = Map.put(state, :pushcount, pushcount)
+        #ratio = news/neww
+        #IO.puts "Got a pushcount at " <> inspect(pid) <> " with s/w #{ratio} and pushcount #{pushcount}"
+        unless (pushcount == 3) do
+            GossipNode.push_sum(neighbour, news, neww, roundnumber + 1)        
         else
-            pushcount = Map.get(state, :pushcount)
+            GossipOrchestrator.converged(news/neww)
         end
-        GossipNode.push_sum(neighbour, news, neww, roundnumber)
         {:noreply, state}
     end
 
@@ -70,22 +86,23 @@ defmodule GossipNode do
         {:reply, state, state}
     end
 
-    defp sendrumour(pid, roundnumber) do
+    def sendrumour(pid, roundnumber) do
         state = GossipNode.get_state(pid)
         neighbours = Map.get(state, :neighbours)
         count = Map.get(state, :rumourcount)
         if(count != nil && count <= 10) do
             neighbourpid = getrandomneighbour(neighbours)
             GossipNode.hear_rumour(neighbourpid, roundnumber + 1)
-            Process.sleep(5) # make the process sleep for 5ms
+            #Process.sleep(5) # make the process sleep for 5ms
             sendrumour(pid, roundnumber + 1)
         end
     end
 
     defp getrandomneighbour(neighbours) do
         case neighbours do
-            :completenetwork -> self() # TODO get a service neighbour
+            :completenetwork -> GossipOrchestrator.get_random_neighbour_full
             _ -> elem(neighbours, :rand.uniform(tuple_size(neighbours)) - 1)
         end
     end
+
 end

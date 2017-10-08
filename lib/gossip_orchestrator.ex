@@ -1,14 +1,76 @@
 defmodule GossipOrchestrator do
+    use GenServer
 
-    def startgossipsimulation(args) do
-        nodes = createnetwork(elem(args, 0), elem(args,1))
-        case elem(args, 2) do
-            "gossip" -> GossipNode.hear_rumour(elem(nodes, :rand.uniform(tuple_size(nodes) - 1)), 0)
-            "push-sum" -> GossipNode.push_sum(elem(nodes, :rand.uniform(tuple_size(nodes) - 1)), 0)
-        end
+    def start_link(args) do
+        GenServer.start_link(__MODULE__, %{:numnodes => elem(args,0), :topology => elem(args, 1), :algorithm => elem(args, 2)}, name: {:global, :orchestrator})
     end
 
-    def createnetwork(numnodes, topology) do
+    def startsimulation do
+        GenServer.call({:global, :orchestrator}, {:createnetwork}, 600000)
+        #IO.puts "Finished creating the network"
+        GenServer.call({:global, :orchestrator}, {:doalgorithm})
+        #IO.puts "Finished starting off the algorithm"
+    end
+
+    def converged(args) do
+        GenServer.cast({:global, :orchestrator}, {:converged, args})
+    end
+
+    def get_random_neighbour_full do
+        GenServer.call({:global, :orchestrator}, {:getrandomneighbourfull})
+    end
+
+    def handle_call({:createnetwork}, _from, state) do
+        numnodes = Map.get(state, :numnodes)
+        topology = Map.get(state, :topology)
+        nodes = createnetwork(numnodes, topology)
+        {:reply, nodes, Map.put(state, :nodes, nodes)}
+    end
+
+    def handle_call({:doalgorithm}, _from, state) do
+        nodes = Map.get(state, :nodes)
+        algorithm = Map.get(state, :algorithm)
+        topology = Map.get(state, :topology)
+        numnodes = Map.get(state, :numnodes)
+        #IO.puts "Starting the algorithm"
+        case algorithm do
+            "gossip" -> 
+                GossipRegistry.start_link(%{:numnodes => numnodes, :topology => topology})
+                starttime = System.monotonic_time(:microsecond)
+                state = Map.put(state, :starttime, starttime)                
+                GossipNode.hear_rumour(elem(nodes, :rand.uniform(tuple_size(nodes) - 1)), 0)
+            "push-sum" -> 
+                starttime = System.monotonic_time(:microsecond)
+                state = Map.put(state, :starttime, starttime)               
+                GossipNode.push_sum(elem(nodes, :rand.uniform(tuple_size(nodes) - 1)), 0, 0, 0)
+        end
+        {:reply, :started, state}
+    end
+
+    def handle_call({:getrandomneighbourfull}, _from, state) do
+        nodes = Map.get(state, :nodes)
+        numnodes = tuple_size(nodes)
+        {:reply, elem(nodes, :rand.uniform(numnodes - 1)), state}
+    end
+
+    def handle_cast({:converged, args}, state) do
+        endtime = System.monotonic_time(:microsecond)
+        starttime = Map.get(state, :starttime)
+        totaltime = endtime - starttime
+        numnodes = Map.get(state, :numnodes)
+        topology = Map.get(state, :topology)
+        algorithm = Map.get(state, :algorithm)
+        case args do
+        {:gossip, reachednodes} ->
+            IO.puts "Time taken for #{reachednodes} out of #{numnodes} nodes in #{topology} topology on #{algorithm} algorithm was #{totaltime} us"
+        _ ->
+            IO.puts "Time taken for #{numnodes} nodes in #{topology} topology on #{algorithm} algorithm was #{totaltime} us with s/w #{args}"
+        end
+        :init.stop()
+        {:noreply, state}
+    end
+
+    defp createnetwork(numnodes, topology) do
         # no. of columns in the network matrix
         rows = if (topology == "2D" or topology == "imp2D") do
                 numnodes |> :math.sqrt |> round
